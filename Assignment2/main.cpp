@@ -30,29 +30,49 @@ Eigen::Matrix4f get_model_matrix(float rotation_angle)
 
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar)
 {
-    // TODO: Copy-paste your implementation from the previous assignment.
     Eigen::Matrix4f projection = Eigen::Matrix4f::Identity();
+
+    // TODO: Implement this function
     // Create the projection matrix for the given parameters.
     // Then return it.
+
+    float fov = eye_fov / 180 * MY_PI;
+    float t = std::tan(fov/2) * zNear;
+    float r = aspect_ratio * t;
+    float b = -t;
+    float l = -r;
+
     Eigen::Matrix4f M_persep;
     M_persep <<
     zNear, 0, 0, 0,
     0, zNear, 0, 0,
     0, 0, zNear+zFar, -zNear*zFar,
-    0, 0,     1, 0;
+    0, 0,     1, 0; 
 
-    float height = (eye_fov/2)*zNear * 2;
-    float width = height*aspect_ratio;
-
-    Eigen::Matrix4f M_ortho;
-    M_ortho <<
-    2/width, 0, 0, 0,
-    0, 2/height,0, 0,
-    0, 0, 2/(zNear-zFar), -(zNear+zFar)/2,
+    Eigen::Matrix4f M_ortho_scale;
+    M_ortho_scale <<
+    2/(r-l), 0, 0, 0,
+    0, 2/(t-b), 0, 0,
+    0, 0, 2/(zNear-zFar), 0,
     0, 0, 0,       1;
 
-    projection=M_ortho*M_persep*projection;
+    Eigen::Matrix4f M_ortho_pos;
+    M_ortho_pos <<
+    1, 0, 0, -(r+l)/2,
+    0, 1, 0, -(t+b)/2,
+    0, 0, 1, -(zNear+zFar)/2,
+    0, 0, 0,       1;
 
+    //为了使得三角形是正着显示的，这里需要把透视矩阵乘以下面这样的矩阵
+    //参考：http://games-cn.org/forums/topic/%e4%bd%9c%e4%b8%9a%e4%b8%89%e7%9a%84%e7%89%9b%e5%80%92%e8%bf%87%e6%9d%a5%e4%ba%86/
+    Eigen::Matrix4f Mt;
+    Mt << 1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, -1, 0,
+        0, 0, 0, 1; 
+
+
+    projection = M_ortho_scale * M_ortho_pos * M_persep * Mt * projection;
     return projection;
 }
 

@@ -9,7 +9,6 @@
 #include <opencv2/opencv.hpp>
 #include <math.h>
 
-
 rst::pos_buf_id rst::rasterizer::load_positions(const std::vector<Eigen::Vector3f> &positions)
 {
     auto id = get_next_id();
@@ -39,24 +38,26 @@ auto to_vec4(const Eigen::Vector3f& v3, float w = 1.0f)
     return Vector4f(v3.x(), v3.y(), v3.z(), w);
 }
 
-
+// 测试点是否在三角形内。你可以修改此函数的定义，这意味着，你可以按照自己的方式更新返回类型或函数参数。
 static bool insideTriangle(int x, int y, const Vector3f* _v)
 {   
     // TODO : Implement this function to check if the point (x, y) is inside the triangle represented by _v[0], _v[1], _v[2]
-    Vector3f P=Vector3f(x,y,_v[0].z());
+    Eigen::Vector2f p;      //检测目标
+    p << x, y;
 
-    Vector3f AB=_v[1]-_v[0];
-    Vector3f BC=_v[2]-_v[1];
-    Vector3f CA=_v[2]-_v[0];
+	//.head(2)指这个点的前两个数值，即x,y
+    Eigen::Vector2f a, b, c;   //被检测的三角形三边向量  
+    a = _v[0].head(2) - _v[1].head(2);          //a = A - B  即B->A
+    b = _v[1].head(2) - _v[2].head(2);          //b = B - C  即C->B
+    c = _v[2].head(2) - _v[0].head(2);          //c = C - A  即A->C  
 
-	Vector3f AP=P-_v[0];
-    Vector3f BP=P-_v[1];
-    Vector3f CP=P-_v[2];
-    //if cross product in the same direction ,its inside the triangle
-    if((AB.cross(AP).z()>0.0f && BC.cross(BP).z()>0.0f && CA.cross(CP).z()>0.0f) || (AB.cross(AP).z()<0.0f && BC.cross(BP).z()<0.0f && CA.cross(CP).z()<0.0f)){
-        return true;
-    }
-    return false;
+    Eigen::Vector2f AP, BP, CP;
+    AP = p - _v[0].head(2);
+    BP = p - _v[1].head(2);
+    CP = p - _v[2].head(2);
+    
+    //由于我这里的向量方向都是逆时针的，所以如果点p在内，那么所有边向量叉乘对应的XP都应该为正值，指向z的正半轴。
+    return AP[0] * c[1] - AP[1] * c[0] > 0 && BP[0] * a[1] - BP[1] * a[0] > 0 && CP[0] * b[1] - CP[1] * b[0] > 0;
 }
 
 static std::tuple<float, float, float> computeBarycentric2D(float x, float y, const Vector3f* v)
@@ -117,37 +118,109 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
 }
 
 //Screen space rasterization
+// 执行三角形栅格化算法
 void rst::rasterizer::rasterize_triangle(const Triangle& t) {
-    auto v = t.toVector4();
+    auto v = t.toVector4();//这里是把三角形结构体换成三个顶点如（x1,y1,z1,1） 
+			   //还记得嘛？最后的1表示它是一个点,用于齐次坐标
 
     // TODO : Find out the bounding box of current triangle.
-    std::vector<float> arr_x{t.v[0].x(),t.v[1].x(),t.v[2].x()};
-    std::vector<float> arr_y{t.v[0].y(),t.v[1].y(),t.v[2].y()};
-    std::sort(arr_x.begin(),arr_x.end());
-    std::sort(arr_y.begin(),arr_y.end());
-
     // iterate through the pixel and find if the current pixel is inside the triangle
-    for(int x=arr_x[0];x<=arr_x[2];x+=1){
-        for(int y=arr_y[0];y<arr_y[2];y+=1){
-            if(insideTriangle(x+0.5f,y+0.5f,t.v)){
-				
-				// If so, use the following code to get the interpolated z value.
-                auto[alpha, beta, gamma] = computeBarycentric2D(x+0.5f, y+0.5f, t.v);
-                float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
-                float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
-                z_interpolated *= w_reciprocal;
-				//\end 
-                
-				// TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
-				if (z_interpolated < depth_buf[get_index(x, y)]) {
-                    Eigen::Vector3f point(x, y, 1.0f);
-                    set_pixel(point, t.getColor());
-					//重置深度缓存颜色
-                    depth_buf[get_index(x, y)] = z_interpolated;
+
+    // If so, use the following code to get the interpolated z value.
+    //auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
+    //float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+    //float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+    //z_interpolated *= w_reciprocal;
+
+    // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
+
+    //v包含三角形的顶点坐标数据
+    //v[i][j] i表示顶点索引 j为0时表示为x轴坐标，为1时表示为y坐标
+
+			   
+    //bounding box
+    float min_x = std::min(v[0][0], std::min(v[1][0], v[2][0]));
+    float max_x = std::max(v[0][0], std::max(v[1][0], v[2][0]));
+    float min_y = std::min(v[0][1], std::min(v[1][1], v[2][1]));
+    float max_y = std::max(v[0][1], std::max(v[1][1], v[2][1]));
+
+    min_x = static_cast<int>(std::floor(min_x));
+    min_y = static_cast<int>(std::floor(min_y));
+    max_x = static_cast<int>(std::ceil(max_x));
+    max_y = static_cast<int>(std::ceil(max_y));
+
+	//左边界小数部分全部直接舍，右边界小数部分直接入，确保单元边界坐标都是整数，三角形一定在bounding box内。
+
+    bool MSAA = true;//MSAA是否启用
+
+    if (MSAA)
+    {
+        std::vector<Eigen::Vector2f> pos
+        {                               //对一个像素分割四份 当然你还可以分成4x4 8x8等等甚至你还可以为了某种特殊情况设计成不规则的图形来分割单元
+            {0.25,0.25},                //左下
+            {0.75,0.25},                //右下
+            {0.25,0.75},                //左上
+            {0.75,0.75}                 //右上
+        };
+        for (int i = min_x; i <= max_x; ++i)
+        {
+            for (int j = min_y; j <= max_y; ++j)
+            {
+                int count = 0;
+                float minDepth = FLT_MAX;
+                for (int MSAA_4 = 0; MSAA_4 < 4; ++MSAA_4)
+                {
+                    if (insideTriangle(static_cast<float>(i+pos[MSAA_4][0]), static_cast<float>(j+pos[MSAA_4][1]),t.v))
+                    {
+			    auto[alpha, beta, gamma] = computeBarycentric2D(static_cast<float>(i + pos[MSAA_4][0]), static_cast<float>(j + pos[MSAA_4][1]), t.v);
+	                    float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+	                    float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+	                    z_interpolated *= w_reciprocal;
+
+                        minDepth = std::min(minDepth, z_interpolated);
+                        ++count;
+                    }
+                }
+                if (count)
+                {
+                    if (depth_buf[get_index(i, j)] > minDepth)
+                    {
+                        depth_buf[get_index(i, j)] = minDepth;//更新深度
+
+                        Eigen::Vector3f color = t.getColor() * (count / 4.0);//对颜色进行平均，使得边界更平滑，也是一种模糊的手段
+                        Eigen::Vector3f point;
+                        point << static_cast<float>(i), static_cast<float>(j), minDepth;
+                        set_pixel(point, color);//设置颜色
+                    }
                 }
             }
         }
     }
+    else
+    {
+		for (int i = min_x; i <= max_x; ++i)
+		{
+			for (int j = min_y; j <= max_y; ++j)
+			{
+				if (insideTriangle(static_cast<float>(i+0.5), static_cast<float>(j+0.5),t.v))
+				{
+					auto [alpha, beta, gamma] = computeBarycentric2D(static_cast<float>(i + 0.5), static_cast<float>(j + 0.5), t.v);
+					float w_reciprocal = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+					float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+					z_interpolated *= w_reciprocal;
+
+					if (depth_buf[get_index(i, j)] > z_interpolated)
+					{
+						depth_buf[get_index(i, j)] = z_interpolated;//更新深度
+						Eigen::Vector3f color = t.getColor();
+						Eigen::Vector3f point;
+						point << static_cast<float>(i), static_cast<float>(j), z_interpolated;
+						set_pixel(point, color);//设置颜色
+					}
+				}
+			}
+		}
+	}
 }
 
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
